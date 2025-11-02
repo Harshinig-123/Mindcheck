@@ -1,109 +1,114 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Depression & Stress Analyzer</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🎙 Voice-Based Mental Health Analyzer</title>
+  <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🧠 Depression & Stress Analyzer</h1>
-            <p>Share your thoughts and get instant analysis of your mental well-being</p>
-        </div>
-
-        <div class="input-section">
-            <h2>How are you feeling today?</h2>
-            <p class="subtitle">Write about your thoughts, feelings, or what's on your mind:</p>
-            
-            <textarea id="textInput" placeholder="For example: I've been feeling really down lately and can't find joy in anything. Everything feels overwhelming and I'm constantly tired..."></textarea>
-            
-            <div class="button-container">
-                <button id="analyzeBtn" onclick="analyzeText()">Analyze My Mental State</button>
-            </div>
-
-            <div class="disclaimer">
-                <p>🔒 <strong>Privacy Note:</strong> Your text is analyzed anonymously and not stored.</p>
-                <p>⚠️ <strong>Disclaimer:</strong> This is an AI tool, not a medical diagnosis. If you're in crisis, please contact professional help immediately.</p>
-            </div>
-        </div>
-
-        <div id="loadingSection" class="loading-section" style="display: none;">
-            <div class="spinner"></div>
-            <p>Analyzing your mental state...</p>
-        </div>
-
-        <div id="resultSection" class="result-section" style="display: none;">
-            <h2>Analysis Results</h2>
-            
-            <div class="text-preview">
-                <strong>Your text:</strong> "<span id="textPreview"></span>"
-            </div>
-
-            <div class="risk-card" id="depressionCard">
-                <h3>Depression Analysis</h3>
-                <div class="risk-level" id="depressionLevel"></div>
-                <div class="explanation" id="depressionExplanation"></div>
-                
-                <div class="score-container">
-                    <label>Depression Risk Score:</label>
-                    <div class="score-bar">
-                        <div class="score-fill" id="depressionScoreFill"></div>
-                    </div>
-                    <span class="score-value" id="depressionScoreValue"></span>
-                </div>
-            </div>
-
-            <div class="risk-card" id="stressCard">
-                <h3>Stress Analysis</h3>
-                <div class="risk-level" id="stressLevel"></div>
-                <div class="explanation" id="stressExplanation"></div>
-                
-                <div class="score-container">
-                    <label>Stress Level Score:</label>
-                    <div class="score-bar">
-                        <div class="score-fill" id="stressScoreFill"></div>
-                    </div>
-                    <span class="score-value" id="stressScoreValue"></span>
-                </div>
-            </div>
-
-            <div class="emotions-section">
-                <h3>Detected Emotions</h3>
-                <p>Dominant emotion: <strong id="dominantEmotion"></strong></p>
-                <div class="emotion-pills" id="emotionPills"></div>
-            </div>
-
-            <div class="recommendations">
-                <h3>💡 Personalized Recommendations</h3>
-                <ul id="recommendationsList"></ul>
-            </div>
-
-            <div class="crisis-resources">
-                <h4>🚨 Immediate Crisis Resources</h4>
-                <div class="resources-grid">
-                    <div class="resource-item">
-                        <strong>National Suicide Prevention Lifeline</strong>
-                        <p>Call or Text: 988</p>
-                    </div>
-                    <div class="resource-item">
-                        <strong>Crisis Text Line</strong>
-                        <p>Text: HOME to 741741</p>
-                    </div>
-                    <div class="resource-item">
-                        <strong>Emergency Services</strong>
-                        <p>Dial: 911</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div id="errorSection" class="error-section" style="display: none;">
-            <div class="error-message" id="errorMessage"></div>
-        </div>
+  <div class="container">
+    <div class="header">
+      <h1>🧠 Voice-Based Depression & Stress Analyzer</h1>
+      <p>Speak freely and get instant insights about your emotional well-being</p>
     </div>
 
-    <script src="script.js"></script>
+    <div class="input-section">
+      <h2>How are you feeling today?</h2>
+      <p class="subtitle">Press record and speak about how your day has been or how you're feeling:</p>
+
+      <div class="button-container">
+        <button id="recordBtn" onclick="startRecording()">🎙 Start Recording</button>
+      </div>
+
+      <audio id="audioPreview" controls style="display:none; margin-top: 10px;"></audio>
+
+      <div class="disclaimer">
+        <p>🔒 <strong>Privacy Note:</strong> Your audio is processed securely and never stored.</p>
+        <p>⚠️ <strong>Disclaimer:</strong> This AI tool is for awareness only, not a medical diagnosis. If you’re in crisis, please seek professional help immediately.</p>
+      </div>
+    </div>
+
+    <!-- Loading -->
+    <div id="loadingSection" class="loading-section" style="display: none;">
+      <div class="spinner"></div>
+      <p>Analyzing your voice for emotional patterns...</p>
+    </div>
+
+    <!-- Results Section -->
+    <div id="resultSection" class="result-section" style="display: none;">
+      <h2>🎯 Analysis Results</h2>
+
+      <!-- Depression Analysis -->
+      <div class="risk-card" id="depressionCard">
+        <h3>Depression Analysis</h3>
+        <div class="risk-level" id="depressionLevel"></div>
+        <div class="explanation" id="depressionExplanation"></div>
+
+        <div class="score-container">
+          <label>Depression Risk Score:</label>
+          <div class="score-bar">
+            <div class="score-fill" id="depressionScoreFill"></div>
+          </div>
+          <span class="score-value" id="depressionScoreValue"></span>
+        </div>
+      </div>
+
+      <!-- Stress Analysis -->
+      <div class="risk-card" id="stressCard">
+        <h3>Stress Analysis</h3>
+        <div class="risk-level" id="stressLevel"></div>
+        <div class="explanation" id="stressExplanation"></div>
+
+        <div class="score-container">
+          <label>Stress Level Score:</label>
+          <div class="score-bar">
+            <div class="score-fill" id="stressScoreFill"></div>
+          </div>
+          <span class="score-value" id="stressScoreValue"></span>
+        </div>
+      </div>
+
+      <!-- Emotions -->
+      <div class="emotions-section">
+        <h3>Detected Emotions</h3>
+        <p>Dominant Emotion: <strong id="dominantEmotion"></strong></p>
+        <div class="emotion-pills" id="emotionPills"></div>
+      </div>
+
+      <!-- Recommendations -->
+      <div class="recommendations">
+        <h3>💡 Personalized Recommendations</h3>
+        <ul id="recommendationsList"></ul>
+      </div>
+
+      <!-- Crisis Resources -->
+      <div class="crisis-resources">
+        <h4>🚨 Immediate Crisis Resources</h4>
+        <div class="resources-grid">
+          <div class="resource-item">
+            <strong>National Suicide Prevention Lifeline</strong>
+            <p>Call or Text: 988</p>
+          </div>
+          <div class="resource-item">
+            <strong>Crisis Text Line</strong>
+            <p>Text: HOME to 741741</p>
+          </div>
+          <div class="resource-item">
+            <strong>Emergency Services</strong>
+            <p>Dial: 911</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error Section -->
+    <div id="errorSection" class="error-section" style="display: none;">
+      <div class="error-message" id="errorMessage"></div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
 </body>
 </html>
