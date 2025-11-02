@@ -1,35 +1,47 @@
 // --- [Global Variables] ---
 
-// A global variable to hold the data from the last analysis
-// This is so 'saveToDashboard' can access it.
 let currentAnalysisResult = null;
-let currentInputMethod = 'text'; // Track the active input
-let mediaRecorder; // For voice recording
-let audioChunks = []; // To store recorded audio
-let audioBlob = null; // To hold the final blob
+let currentInputMethod = 'text'; 
+let mediaRecorder; 
+let audioChunks = []; 
+let audioBlob = null; 
+
+// Chart instances for the dashboard
+let weekChartInstance = null;
+let moodTrendChartInstance = null;
+let stressTrendChartInstance = null;
+
+
+// --- [Helper Function for Data Safety] ---
+// This function safely retrieves the mood and stress scores, 
+// checking for the new 'mood' property and falling back to the old 'depression' if needed.
+function getEntryScores(entry) {
+    // Check if entry has the new 'mood' structure, otherwise use 'depression'
+    const moodData = entry.mood || entry.depression || { score: 50 }; // Default to 50 if structure is missing
+    const stressData = entry.stress || { score: 50 };
+    
+    return {
+        moodScore: moodData.score,
+        stressScore: stressData.score,
+    };
+}
+
 
 // --- [Event Listeners] ---
 document.addEventListener('DOMContentLoaded', () => {
-    // Main navigation
     document.querySelector('.nav-btn[onclick="showSection(\'checkin\')"]').addEventListener('click', () => showSection('checkin'));
-    document.querySelector('.nav-btn[onclick="showSection(\'dashboard\')"]').addEventListener('click', () => showSection('dashboard'));
+    document.querySelector('.nav-btn[onclick="showSection(\'dashboard\')"]')?.addEventListener('click', () => showSection('dashboard'));
 
-    // Input toggles
     document.querySelector('.toggle-btn[onclick="toggleInputMethod(\'text\')"]').addEventListener('click', () => toggleInputMethod('text'));
     document.querySelector('.toggle-btn[onclick="toggleInputMethod(\'voice\')"]').addEventListener('click', () => toggleInputMethod('voice'));
 
-    // Main "Analyze" button
-    // Make sure your HTML button's onclick is "analyzeInput()"
     document.getElementById('analyzeBtn').addEventListener('click', analyzeInput); 
 
-    // Voice recording buttons
-    document.getElementById('recordBtn').addEventListener('click', toggleRecording); // Changed from mock
+    document.getElementById('recordBtn').addEventListener('click', toggleRecording);
     document.querySelector('.retry-btn[onclick="retryRecording()"]').addEventListener('click', retryRecording);
 
-    // Results button
     document.querySelector('.save-btn[onclick="saveToDashboard()"]').addEventListener('click', saveToDashboard);
 
-    // Load check-in section by default
     showSection('checkin');
 });
 
@@ -37,21 +49,20 @@ document.addEventListener('DOMContentLoaded', () => {
 // --- [1. Main Navigation] ---
 
 function showSection(sectionId) {
-    // Hide all main sections
     document.querySelectorAll('.main-section').forEach(section => {
         section.style.display = 'none';
     });
     
-    // Show the target section
     document.getElementById(sectionId + 'Section').style.display = 'block';
     
-    // Update nav button active state
     document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.classList.remove('active');
     });
-    document.querySelector(`.nav-btn[onclick="showSection('${sectionId}')"]`).classList.add('active');
+    const activeBtn = document.querySelector(`.nav-btn[onclick="showSection('${sectionId}')"]`);
+    if (activeBtn) {
+        activeBtn.classList.add('active');
+    }
     
-    // If we are showing the dashboard, load its data
     if (sectionId === 'dashboard') {
         loadDashboard();
     }
@@ -66,7 +77,7 @@ function toggleInputMethod(method) {
     const textBtn = document.querySelector('.toggle-btn[onclick="toggleInputMethod(\'text\')"]');
     const voiceBtn = document.querySelector('.toggle-btn[onclick="toggleInputMethod(\'voice\')"]');
     
-    currentInputMethod = method; // Set the global state
+    currentInputMethod = method; 
 
     if (method === 'text') {
         textMethod.style.display = 'block';
@@ -81,7 +92,7 @@ function toggleInputMethod(method) {
     }
 }
 
-// --- [3. Real Voice Recording] ---
+// --- [3. Voice Recording] ---
 
 async function toggleRecording() {
     const recordBtn = document.getElementById('recordBtn');
@@ -100,7 +111,6 @@ async function toggleRecording() {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             mediaRecorder = new MediaRecorder(stream);
             
-            // Reset chunks and blob
             audioChunks = [];
             audioBlob = null;
             
@@ -109,21 +119,17 @@ async function toggleRecording() {
             };
 
             mediaRecorder.onstop = () => {
-                // *** CRITICAL FIX: Create a webm blob ***
                 audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                 
-                // Show "Retry" button
                 document.getElementById('recordingResult').style.display = 'block';
                 document.getElementById('transcribedText').innerText = `[Recording captured (${(audioBlob.size / 1024).toFixed(1)} KB)]`;
-                recordBtn.style.display = 'none'; // Hide the main record button
+                recordBtn.style.display = 'none'; 
 
-                // Stop all tracks to turn off the mic icon in the browser tab
                 stream.getTracks().forEach(track => track.stop());
             };
 
             mediaRecorder.start();
             
-            // Update UI
             recordBtn.querySelector('span').innerText = 'Click to STOP recording';
             recordBtn.querySelector('i').className = 'fas fa-stop-circle';
             recordingStatus.style.display = 'block';
@@ -147,7 +153,7 @@ function retryRecording() {
     
     document.getElementById('recordingStatus').style.display = 'none';
     document.getElementById('recordingResult').style.display = 'none';
-    document.getElementById('textInput').value = ''; // Clear any old text
+    document.getElementById('textInput').value = ''; 
 }
 
 function showError(message) {
@@ -157,11 +163,9 @@ function showError(message) {
     document.getElementById('errorMessage').innerText = message;
     errorSection.style.display = 'block';
     
-    // Hide other sections
     document.getElementById('loadingSection').style.display = 'none';
     document.getElementById('resultSection').style.display = 'none';
     
-    // Reset button
     analyzeBtn.disabled = false;
     analyzeBtn.innerHTML = '<i class="fas fa-heartbeat"></i> Understand my feelings';
 }
@@ -175,7 +179,6 @@ function analyzeInput() {
     const resultSection = document.getElementById('resultSection');
     const errorSection = document.getElementById('errorSection');
 
-    // Reset UI
     resultSection.style.display = 'none';
     errorSection.style.display = 'none';
     loadingSection.style.display = 'block';
@@ -184,7 +187,6 @@ function analyzeInput() {
 
     const formData = new FormData();
 
-    // --- Prepare Form Data ---
     if (currentInputMethod === 'text') {
         const text = document.getElementById('textInput').value.trim();
         if (text.length < 10) {
@@ -198,18 +200,15 @@ function analyzeInput() {
             showError('Please record your voice first, or switch to text input.');
             return;
         }
-        // *** CRITICAL FIX: Send as a .webm file ***
         formData.append('audio', audioBlob, 'recording.webm');
     }
 
-    // --- Call the Flask API ---
     fetch('http://127.0.0.1:5000/analyze', {
         method: 'POST',
         body: formData 
     })
     .then(response => {
         if (!response.ok) {
-            // Server returned an error, get the text
             return response.text().then(text => { 
                 throw new Error(`Server error: ${response.status} ${response.statusText} - ${text}`) 
             });
@@ -224,22 +223,20 @@ function analyzeInput() {
         if (data.error) {
             showError(data.error);
         } else {
-            // --- Success: Format data and display ---
-            
             if (currentInputMethod === 'voice' && data.text) {
                 document.getElementById('textInput').value = data.text;
-                document.getElementById('transcribedText').innerText = `We heard: "${data.text}"`;
+                document.getElementById('transcribedText').innerHTML = `<strong>We heard:</strong> "${data.text}"`;
             }
-
+            
             const formattedData = {
                 text_preview: data.text.length > 100 ? data.text.substring(0, 100) + '...' : data.text,
                 full_text: data.text,
                 timestamp: new Date().toISOString(),
-                depression: data.depression,
+                mood: data.mood, 
                 stress: data.stress,
                 emotions: data.emotion,
                 recommendations: data.recommendations.map(rec => ({ 
-                    title: 'Suggestion', // Give a default title
+                    title: 'Gentle Suggestion',
                     text: rec 
                 }))
             };
@@ -250,7 +247,7 @@ function analyzeInput() {
     })
     .catch(err => {
         console.error('Fetch Error:', err);
-        showError('An analysis error occurred. This could be a connection issue or the AI model is loading. Please wait a moment and try again.');
+        showError('An analysis error occurred. This could be a connection issue or the AI model is loading. Please wait a moment and try again. Ensure the Flask server is running.');
     });
 }
 
@@ -268,52 +265,45 @@ function displayResults(data) {
 
     document.getElementById('textPreview').innerText = data.text_preview;
 
-    // --- *** MODIFIED MOOD CARD LOGIC *** ---
-    const depCard = document.getElementById('depressionCard');
-    const depLevel = data.depression.level;
-    depCard.className = 'insight-card'; // Reset classes
+    // --- Mood Card Logic ---
+    const moodCard = document.getElementById('moodCard');
+    const moodLevel = data.mood.level;
+    moodCard.className = 'insight-card';
+    moodCard.classList.add(data.mood.label_class); 
     
-    // Map new levels to CSS classes
-    if (depLevel === 'Positive Mood') {
-        depCard.classList.add('positive-mood');
-    } else if (depLevel === 'Neutral / Balanced') {
-        depCard.classList.add('neutral-mood');
-    } else if (depLevel === 'Slightly Low Mood') {
-        depCard.classList.add('slightly-low-mood');
-    } else if (depLevel === 'Low Mood') {
-        depCard.classList.add('low-mood');
-    } else if (depLevel === 'Very Low Mood') {
-        depCard.classList.add('very-low-mood');
-    }
+    document.getElementById('moodLevel').innerText = moodLevel;
+    document.getElementById('moodExplanation').innerText = data.mood.explanation;
     
-    document.getElementById('depressionLevel').innerText = depLevel;
-    document.getElementById('depressionExplanation').innerText = data.depression.explanation;
-    document.getElementById('depressionScoreFill').style.width = data.depression.score + '%';
-    document.getElementById('depressionScoreValue').innerText = data.depression.score + '%';
-    // --- *** END OF MODIFIED MOOD LOGIC *** ---
+    // Target the clip layer for width adjustment
+    const moodFill = document.getElementById('moodScoreFill'); 
+    moodFill.style.width = data.mood.score + '%'; 
+    document.getElementById('moodScoreValue').innerText = data.mood.score + '%';
 
-
-    // --- Stress Card Logic (Unchanged) ---
+    // --- Stress Card Logic ---
     const strCard = document.getElementById('stressCard');
     const strLevel = data.stress.level;
-    strCard.className = 'insight-card'; // Reset classes
+    strCard.className = 'insight-card';
     if (strLevel === 'HIGH STRESS') strCard.classList.add('dangerous');
     else if (strLevel === 'MODERATE STRESS') strCard.classList.add('moderate-risk');
-    else strCard.classList.add('safe'); // 'safe' is the low-stress style
+    else strCard.classList.add('safe'); 
 
     document.getElementById('stressLevel').innerText = strLevel;
     document.getElementById('stressExplanation').innerText = data.stress.explanation;
-    document.getElementById('stressScoreFill').style.width = data.stress.score + '%';
+    
+    // Target the clip layer for width adjustment
+    const stressFill = document.getElementById('stressScoreFill'); 
+    stressFill.style.width = data.stress.score + '%'; 
     document.getElementById('stressScoreValue').innerText = data.stress.score + '%';
 
-    // --- Weather Card Logic (Unchanged) ---
+    // --- Weather Report Logic ---
     const dominant = data.emotions.dominant;
     const weatherIcon = document.getElementById('weatherEmoji');
     const weatherMain = document.getElementById('weatherMain');
     const weatherDesc = document.getElementById('weatherDesc');
     
     weatherIcon.className = 'fas';
-    if (dominant === 'disgust' || dominant === 'anger' || data.depression.score > 70) {
+    
+    if (dominant === 'disgust' || dominant === 'anger' || data.mood.score < 30) {
         weatherIcon.classList.add('fa-cloud-rain');
         weatherMain.innerText = 'Heavy Rain';
         weatherDesc.innerText = `Strong feelings of ${dominant} and heaviness present.`;
@@ -321,11 +311,11 @@ function displayResults(data) {
         weatherIcon.classList.add('fa-wind');
         weatherMain.innerText = 'Stormy Weather';
         weatherDesc.innerText = `A lot of ${dominant} or surprising energy.`;
-    } else if (dominant === 'joy') {
+    } else if (dominant === 'joy' || data.mood.score > 80) {
         weatherIcon.classList.add('fa-sun');
         weatherMain.innerText = 'Bright Sunshine';
         weatherDesc.innerText = 'Clear skies with feelings of joy and positivity.';
-    } else if (dominant === 'sadness') {
+    } else if (dominant === 'sadness' || data.mood.score < 60) {
         weatherIcon.classList.add('fa-cloud-sun');
         weatherMain.innerText = 'Partly Cloudy';
         weatherDesc.innerText = 'A mix of clouds and sun; some sadness present.';
@@ -335,7 +325,6 @@ function displayResults(data) {
         weatherDesc.innerText = `Feelings of ${dominant} are present.`;
     }
 
-    // --- Emotion Cloud (Unchanged) ---
     const cloud = document.getElementById('emotionCloud');
     cloud.innerHTML = '';
     document.getElementById('dominantEmotion').innerText = dominant;
@@ -352,7 +341,6 @@ function displayResults(data) {
         cloud.appendChild(tag);
     }
 
-    // --- Suggestions (Unchanged) ---
     const grid = document.getElementById('suggestionsGrid');
     grid.innerHTML = '';
     
@@ -368,7 +356,7 @@ function displayResults(data) {
 }
 
 
-// --- [6. Dashboard Logic (Persistence)] ---
+// --- [6. Dashboard Logic (Persistence & Chart.js)] ---
 
 function saveToDashboard() {
     if (!currentAnalysisResult) return;
@@ -377,14 +365,13 @@ function saveToDashboard() {
     
     currentAnalysisResult.text_preview = currentAnalysisResult.full_text.length > 100 ? currentAnalysisResult.full_text.substring(0, 100) + '...' : currentAnalysisResult.full_text;
     
-    // Ensure recommendations are in the object format, not just strings
-    if (currentAnalysisResult.recommendations && typeof currentAnalysisResult.recommendations[0] === 'string') {
-         currentAnalysisResult.recommendations = currentAnalysisResult.recommendations.map(rec => ({ 
-            title: 'Suggestion',
-            text: rec 
-        }));
+    // IMPORTANT: Ensure old entries that only had 'depression' are updated to use 'mood' 
+    // This is handled in getEntryScores() but we need to ensure new logs save correctly
+    if (currentAnalysisResult.depression) {
+        currentAnalysisResult.mood = currentAnalysisResult.mood || currentAnalysisResult.depression;
+        delete currentAnalysisResult.depression;
     }
-
+    
     log.unshift(currentAnalysisResult);
     
     localStorage.setItem('mindCheckLog', JSON.stringify(log));
@@ -399,47 +386,139 @@ function saveToDashboard() {
 }
 
 function loadDashboard() {
-    const log = JSON.parse(localStorage.getItem('mindCheckLog') || '[]');
+    // Force a reload of data structure to ensure compatibility
+    let log = JSON.parse(localStorage.getItem('mindCheckLog') || '[]');
     
-    const weekChart = document.getElementById('weekChart');
-    const moodTrendChart = document.getElementById('moodTrendChart');
-    const stressTrendChart = document.getElementById('stressTrendChart');
+    // --- Dashboard Element Setup ---
     const emotionSummary = document.getElementById('emotionSummary');
     const reflectionsList = document.getElementById('reflectionsList');
     const weeklyInsights = document.getElementById('weeklyInsights');
 
     if (log.length === 0) {
-        weekChart.innerHTML = '<p style="padding: 20px; color: #6c757d;">No data yet for your weekly chart. Add a check-in to get started!</p>';
-        moodTrendChart.innerHTML = '<p style="padding: 20px; color: #6c757d;">Your mood trend will appear here.</p>';
-        stressTrendChart.innerHTML = '<p style="padding: 20px; color: #6c757d;">Your stress trend will appear here.</p>';
+        document.getElementById('weekChartCanvas').style.display = 'none';
+        document.getElementById('moodTrendChartCanvas').style.display = 'none';
+        document.getElementById('stressTrendChartCanvas').style.display = 'none';
+        
+        document.querySelector('.dashboard-card.full-width .week-chart').innerHTML = '<p style="padding: 20px; color: #6c757d;">No data yet for your weekly chart. Add a check-in to get started!</p>';
+        document.querySelector('.dashboard-card:nth-child(2) .trend-chart').innerHTML = '<p style="padding: 20px; color: #6c757d;">Your mood trend will appear here.</p>';
+        document.querySelector('.dashboard-card:nth-child(3) .trend-chart').innerHTML = '<p style="padding: 20px; color: #6c757d;">Your stress trend will appear here.</p>';
+
         emotionSummary.innerHTML = '<p style="padding: 20px; color: #6c757d;">Your common feelings will be summarized here.</p>';
         reflectionsList.innerHTML = '<p style="padding: 20px; color: #6c757d;">Your recent reflections will be listed here.</p>';
         weeklyInsights.innerHTML = '<p style="padding: 20px; color: #6c757d;">Weekly insights will be generated once you have more entries.</p>';
         return;
     }
 
-    // --- *** MODIFIED: Populate Reflections List with Suggestions *** ---
-    reflectionsList.innerHTML = ''; // Clear
-    log.slice(0, 10).forEach(entry => { // Show last 10
+    // --- Prepare Data for Charts ---
+    const chartData = log.slice(0, 7).reverse(); 
+    
+    // CRITICAL FIX: Use the helper function to get compatible scores
+    const labels = chartData.map(entry => 
+        new Date(entry.timestamp).toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })
+    );
+    const moodScores = chartData.map(entry => getEntryScores(entry).moodScore);
+    const stressScores = chartData.map(entry => getEntryScores(entry).stressScore);
+    const combinedScores = chartData.map(entry => {
+        const scores = getEntryScores(entry);
+        return (scores.moodScore + (100 - scores.stressScore)) / 2;
+    });
+
+    // --- Destroy existing charts to prevent duplication ---
+    if (weekChartInstance) weekChartInstance.destroy();
+    if (moodTrendChartInstance) moodTrendChartInstance.destroy();
+    if (stressTrendChartInstance) stressTrendChartInstance.destroy();
+
+    // --- 7.1. Weekly Overview Chart (Combined Wellbeing) ---
+    const ctxWeek = document.getElementById('weekChartCanvas').getContext('2d');
+    weekChartInstance = new Chart(ctxWeek, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Combined Wellbeing Score',
+                data: combinedScores,
+                backgroundColor: 'rgba(59, 151, 151, 0.8)',
+                borderColor: 'rgb(22, 71, 106)',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: { beginAtZero: true, max: 100 }
+            },
+            plugins: { legend: { display: false } }
+        }
+    });
+
+    // --- 7.2. Mood Trend Chart ---
+    const ctxMood = document.getElementById('moodTrendChartCanvas').getContext('2d');
+    moodTrendChartInstance = new Chart(ctxMood, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Mood Rating',
+                data: moodScores,
+                borderColor: '#28a745', 
+                tension: 0.3
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: { beginAtZero: true, max: 100 }
+            },
+            plugins: { legend: { display: false } }
+        }
+    });
+
+    // --- 7.3. Stress Trend Chart ---
+    const ctxStress = document.getElementById('stressTrendChartCanvas').getContext('2d');
+    stressTrendChartInstance = new Chart(ctxStress, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Stress Score',
+                data: stressScores,
+                borderColor: 'rgb(191, 9, 47)', 
+                tension: 0.3,
+                backgroundColor: 'rgba(191, 9, 47, 0.1)'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: { beginAtZero: true, max: 100, reverse: false } 
+            },
+            plugins: { legend: { display: false } }
+        }
+    });
+
+    // --- Reflections List ---
+    reflectionsList.innerHTML = '';
+    log.slice(0, 10).forEach(entry => {
         const item = document.createElement('div');
         item.className = 'reflection-item';
+        const scores = getEntryScores(entry);
         
-        // Build the suggestions list HTML
         let suggestionsHTML = '';
         if (entry.recommendations && entry.recommendations.length > 0) {
-             suggestionsHTML = `
-                <ul class="reflection-suggestions">
-                    ${entry.recommendations.map(rec => `<li><strong>${rec.title || 'Suggestion'}:</strong> ${rec.text}</li>`).join('')}
-                </ul>
-            `;
+            suggestionsHTML = '<ul class="reflection-suggestions">';
+            entry.recommendations.forEach(rec => {
+                suggestionsHTML += `<li>- ${rec.text}</li>`; 
+            });
+            suggestionsHTML += '</ul>';
         }
 
-        // Build the final HTML for the reflection item
         item.innerHTML = `
             <div class="reflection-header">
                 <strong>${new Date(entry.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</strong>
-                <!-- *** MODIFIED: Show new mood level *** -->
-                <span>(Mood: ${entry.depression.level} | Stress: ${entry.stress.level})</span>
+                <span>Mood: ${scores.moodScore}% | Stress: ${scores.stressScore}%</span>
             </div>
             <p class="reflection-text">"${entry.text_preview}"</p>
             ${suggestionsHTML}
@@ -447,28 +526,11 @@ function loadDashboard() {
         reflectionsList.appendChild(item);
     });
 
-    weekChart.innerHTML = '';
-    const recentEntries = log.slice(0, 7).reverse();
-    recentEntries.forEach(entry => {
-        const totalScore = (entry.depression.score + entry.stress.score) / 2;
-        const bar = document.createElement('div');
-        bar.className = 'chart-bar';
-        bar.style.height = `${totalScore}%`;
-        bar.title = `Mood: ${entry.depression.score}%, Stress: ${entry.stress.score}%`;
-        
-        const label = document.createElement('span');
-        label.className = 'bar-label';
-        label.innerText = new Date(entry.timestamp).toLocaleDateString('en-US', { weekday: 'short' });
-        
-        bar.appendChild(label);
-        weekChart.appendChild(bar);
-    });
-
+    // --- Emotion Summary ---
     emotionSummary.innerHTML = '';
     const allEmotions = {};
     log.forEach(entry => {
-        // Ensure entry.emotions.dominant exists (for older log data)
-        const dominant = entry.emotions ? entry.emotions.dominant : 'neutral';
+        const dominant = entry.emotions.dominant;
         allEmotions[dominant] = (allEmotions[dominant] || 0) + 1;
     });
     
@@ -480,193 +542,24 @@ function loadDashboard() {
         emotionSummary.appendChild(tag);
     });
 
-    moodTrendChart.innerHTML = '<p style="padding: 20px; color: #6c757d;">A beautiful line chart (using Chart.js) would show your mood trend here.</p>';
-    stressTrendChart.innerHTML = '<p style="padding: 20px; color: #6c757d;">A beautiful line chart (using Chart.js) would show your stress trend here.</p>';
-    
-    const insightGrid = document.getElementById('weeklyInsights');
-    insightGrid.innerHTML = '';
-    
-    insightGrid.innerHTML = `
+    // --- Weekly Insights ---
+    const totalMood = log.reduce((acc, e) => acc + getEntryScores(e).moodScore, 0);
+    const totalStress = log.reduce((acc, e) => acc + getEntryScores(e).stressScore, 0);
+    const avgMood = (totalMood / log.length).toFixed(0);
+    const avgStress = (totalStress / log.length).toFixed(0);
+
+    weeklyInsights.innerHTML = `
         <div class="insight-item">
             <h4>Your most common feeling</h4>
             <p>This past week, your most logged feeling was <strong>${sortedEmotions.length > 0 ? sortedEmotions[0][0] : 'N/A'}</strong>.</p>
         </div>
         <div class="insight-item">
-            <h4>Your average mood</h4>
-            <p>Your average low-mood indicator was <strong>${(log.reduce((acc, e) => acc + e.depression.score, 0) / log.length).toFixed(0)}%</strong>.</p>
+            <h4>Your average mood rating</h4>
+            <p>Your average mood rating was <strong>${avgMood}%</strong>. (Higher is better)</p>
         </div>
         <div class="insight-item">
             <h4>Your average stress</h4>
-            <p>Your average stress indicator was <strong>${(log.reduce((acc, e) => acc + e.stress.score, 0) / log.length).toFixed(0)}%</strong>.</p>
+            <p>Your average stress indicator was <strong>${avgStress}%</strong>. (Lower is better)</p>
         </div>
     `;
 }
-
-/* ==========================
-// Voice-based Mental Health Analyzer
-// ==========================
-
-let mediaRecorder;
-let audioChunks = [];
-let isRecording = false;
-
-async function startRecording() {
-    const recordBtn = document.getElementById('recordBtn');
-    const loadingSection = document.getElementById('loadingSection');
-    const errorSection = document.getElementById('errorSection');
-    const resultSection = document.getElementById('resultSection');
-    
-    // Reset previous states
-    resultSection.style.display = 'none';
-    errorSection.style.display = 'none';
-    
-    if (isRecording) {
-        // Stop recording
-        mediaRecorder.stop();
-        isRecording = false;
-        recordBtn.textContent = '🎙 Start Recording';
-        recordBtn.classList.remove('recording');
-    } else {
-        // Start recording
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream);
-            audioChunks = [];
-
-            mediaRecorder.ondataavailable = event => {
-                if (event.data.size > 0) {
-                    audioChunks.push(event.data);
-                }
-            };
-
-            mediaRecorder.onstop = async () => {
-                // Create audio blob
-                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                const audioUrl = URL.createObjectURL(audioBlob);
-
-                // Play preview (optional)
-                const audioPreview = document.getElementById('audioPreview');
-                audioPreview.src = audioUrl;
-                audioPreview.style.display = 'block';
-
-                // Send audio for analysis
-                await analyzeAudio(audioBlob);
-            };
-
-            mediaRecorder.start();
-            isRecording = true;
-            recordBtn.textContent = '⏹ Stop Recording';
-            recordBtn.classList.add('recording');
-
-        } catch (error) {
-            showError('Microphone access denied or not available.');
-            console.error('Recording error:', error);
-        }
-    }
-}
-
-async function analyzeAudio(audioBlob) {
-    const recordBtn = document.getElementById('recordBtn');
-    const loadingSection = document.getElementById('loadingSection');
-    const resultSection = document.getElementById('resultSection');
-    
-    loadingSection.style.display = 'block';
-    recordBtn.disabled = true;
-
-    try {
-        const formData = new FormData();
-        formData.append('audio', audioBlob, 'recording.wav');
-
-        const response = await fetch('/analyze_audio', {
-            method: 'POST',
-            body: formData
-        });
-
-        const data = await response.json();
-
-        loadingSection.style.display = 'none';
-        recordBtn.disabled = false;
-
-        if (data.error) {
-            showError(data.error);
-            return;
-        }
-
-        displayResults(data);
-    } catch (error) {
-        loadingSection.style.display = 'none';
-        recordBtn.disabled = false;
-        showError('Error analyzing audio. Please try again.');
-        console.error('Error:', error);
-    }
-}
-
-// ==========================
-// Result Display Functions
-// ==========================
-
-function displayResults(data) {
-    const resultSection = document.getElementById('resultSection');
-    const dominantEmotion = document.getElementById('dominantEmotion');
-    const emotionPills = document.getElementById('emotionPills');
-    const recommendationsList = document.getElementById('recommendationsList');
-
-    // Depression
-    displayMetric('depression', data.depression);
-
-    // Stress
-    displayMetric('stress', data.stress);
-
-    // Emotions
-    dominantEmotion.textContent = data.emotions.dominant.toUpperCase();
-    emotionPills.innerHTML = '';
-    Object.entries(data.emotions.all_emotions).forEach(([emotion, score]) => {
-        const pill = document.createElement('div');
-        pill.className = 'emotion-pill';
-        if (emotion === data.emotions.dominant) pill.classList.add('highlight');
-        pill.textContent = `${emotion}: ${score}%`;
-        emotionPills.appendChild(pill);
-    });
-
-    // Recommendations
-    recommendationsList.innerHTML = '';
-    data.recommendations.forEach(rec => {
-        const li = document.createElement('li');
-        li.textContent = rec;
-        recommendationsList.appendChild(li);
-    });
-
-    resultSection.style.display = 'block';
-    resultSection.scrollIntoView({ behavior: 'smooth' });
-}
-
-function displayMetric(type, metric) {
-    const card = document.getElementById(`${type}Card`);
-    const levelElement = document.getElementById(`${type}Level`);
-    const explanationElement = document.getElementById(`${type}Explanation`);
-    const scoreFill = document.getElementById(`${type}ScoreFill`);
-    const scoreValue = document.getElementById(`${type}ScoreValue`);
-
-    levelElement.textContent = metric.level;
-    explanationElement.textContent = metric.explanation;
-    scoreValue.textContent = `${metric.score}/100`;
-    scoreFill.style.width = `${metric.score}%`;
-
-    card.className = 'risk-card';
-    if (metric.level.includes('HIGH') || metric.level.includes('DANGEROUS')) {
-        card.classList.add('high-risk');
-    } else if (metric.level.includes('MODERATE')) {
-        card.classList.add('moderate-risk');
-    } else {
-        card.classList.add('low-risk');
-    }
-}
-
-function showError(message) {
-    const errorSection = document.getElementById('errorSection');
-    const errorMessage = document.getElementById('errorMessage');
-    errorMessage.textContent = message;
-    errorSection.style.display = 'block';
-    errorSection.scrollIntoView({ behavior: 'smooth' });
-}
-*/
