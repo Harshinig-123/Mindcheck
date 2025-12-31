@@ -2,18 +2,92 @@ import os
 import re
 import tempfile
 import subprocess
-from datetime import datetime
+from datetime import datetime, UTC
 
-# --- Core Flask and NLP Imports ---
-from flask import Flask, render_template, request, jsonify
+# --- Core Flask and Authentication Imports ---
+from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
 from flask_cors import CORS
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
+from werkzeug.security import generate_password_hash, check_password_hash
+
+# --- AI/NLP Imports ---
 from textblob import TextBlob
 from transformers import pipeline
 import speech_recognition as sr
 
-# --- App Setup ---
-app = Flask(__name__, template_folder='.', static_folder='.')
-CORS(app) 
+# --- App and Database Setup ---
+
+app = Flask(__name__, template_folder='.')
+
+# Flask Configuration
+app.config['SECRET_KEY'] = 'your_super_secret_and_complex_key' 
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///mindcheck.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize Extensions
+db = SQLAlchemy(app)
+CORS(app)
+
+# --- Flask-Login Setup ---
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+# --- Database Models ---
+
+class User(db.Model, UserMixin):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128))
+    
+    # --- NEW: Added role column ---
+    role = db.Column(db.String(20), nullable=False, default='user') 
+    
+    entries = db.relationship('CheckInEntry', backref='user', lazy=True)
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+    def __repr__(self):
+        return f'<User {self.username}>'
+
+class CheckInEntry(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(UTC))
+    mood_score = db.Column(db.Integer, nullable=False)
+    stress_score = db.Column(db.Integer, nullable=False)
+    full_text = db.Column(db.Text, nullable=False)
+    recommendations = db.Column(db.Text, nullable=True) 
+    
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'timestamp': self.timestamp.isoformat(),
+            'mood_score': self.mood_score,
+            'stress_score': self.stress_score,
+            'full_text': self.full_text,
+            'recommendations': self.recommendations.split('||') if self.recommendations else []
+        }
+
+# --- Flask-Login User Loader ---
+@login_manager.user_loader
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
+
+# --- Handle Unauthorized API Requests ---
+@login_manager.unauthorized_handler
+def unauthorized():
+    if request.path.startswith('/api/'):
+        return jsonify(error="Unauthorized access. Please log in."), 401
+    return redirect(url_for('login'))
+
 
 # --- AI Model Initialization ---
 print("Loading emotion classification model...")
@@ -28,7 +102,7 @@ except Exception as e:
     print(f"Error loading AI model: {e}")
     emotion_classifier = None 
 
-# --- Keyword Definitions (Revised for better stress detection) ---
+# --- Keyword Definitions (Revised) ---
 DEPRESSION_KEYWORDS = {
     'high_risk': ['suicide', 'kill myself', 'end it all', 'want to die', 'better off dead', 'harm myself', 'no point living'],
     'medium_risk': ['hopeless', 'empty', 'numb', 'cant go on', 'cant cope', 'worthless', 'no future'],
@@ -36,14 +110,18 @@ DEPRESSION_KEYWORDS = {
 }
 
 STRESS_KEYWORDS = {
-    # Added 'overwhelmed' to all three tiers for maximum detection sensitivity
-    'high': ['overwhelmed', 'cant handle', 'breaking down', 'drowning', 'too much on my plate', 'panic', 'panic attack'],
-    'medium': ['stressed', 'anxious', 'worried', 'pressure', 'nervous', 'tense', 'cant sleep', 'deadline', 'quizzes', 'assignments', 'piling up', 'not working', 'fed up', 'amount of work'],
+    'high': ['overwhelmed', 'cant handle', 'breaking down', 'drowning', 'too much on my plate', 'panic', 'panic attack', 'completely drained'],
+    'medium': ['stressed', 'anxious', 'worried', 'pressure', 'nervous', 'tense', 'cant sleep', 'deadline', 'quizzes', 'assignments', 'piling up', 'not working', 'fed up', 'amount of work', 'never catch up', 'drained'],
     'low': ['busy', 'tired', 'concerned', 'apprehensive', 'distracted', 'coming up', 'overbooked', 'rushed']
 }
 
+POSITIVE_KEYWORDS = [
+    'prepared', "i'll be fine", "ill be fine", 'ready', 'handling it', 'feeling good', 'okay', 
+    'manageable', 'but i', 'however', 'mostly'
+]
+
 # ----------------------------------------------------
-# --- Enhanced Feelings Mapping ---
+# --- AI Analysis Functions (FINAL REVISIONS) ---
 # ----------------------------------------------------
 
 def map_emotions_to_feelings(emotions, text_lower):
@@ -52,11 +130,10 @@ def map_emotions_to_feelings(emotions, text_lower):
     feelings = {k: v for k, v in emotions['all_emotions'].items()}
     dominant = emotions['dominant']
     
-    # Logic to map base emotions to more specific, relatable feelings (like from the wheel)
     if dominant == 'sadness':
         if 'lonely' in text_lower or 'alone' in text_lower:
             feelings['lonely'] = feelings['sadness'] * 0.9
-        elif 'disappoint' in text_lower or 'fed up' in text_lower or 'not working' in text_lower:
+        elif 'disappoint' in text_lower or 'fed up' in text_lower or 'not working' in text_lower or 'drained' in text_lower:
             feelings['disappointed'] = feelings['sadness'] * 0.9
         else:
             feelings['despair'] = feelings['sadness'] * 0.7
@@ -79,7 +156,6 @@ def map_emotions_to_feelings(emotions, text_lower):
         else:
             feelings['peaceful'] = feelings['joy'] * 0.7
             
-    # Remove base emotions that were mapped specifically to avoid redundancy in the cloud
     if 'sadness' in feelings: del feelings['sadness']
     if 'anger' in feelings: del feelings['anger']
     if 'fear' in feelings: del feelings['fear']
@@ -87,27 +163,16 @@ def map_emotions_to_feelings(emotions, text_lower):
     
     return feelings
 
-
-# ----------------------------------------------------
-# --- AI Analysis Functions (Final Calibrations) ---
-# ----------------------------------------------------
-
 def analyze_mood_level(text, emotions):
-    """
-    Analyzes text for low mood keywords and sentiment. Mood Rating (0=Bad, 100=Good).
-    """
+    """Mood Rating (0=Bad, 100=Good). Penalizes for negative emotions/keywords."""
     text_lower = text.lower()
     
-    # 1. Calculate Low Mood Keyword Score
     high = sum(1 for k in DEPRESSION_KEYWORDS['high_risk'] if k in text_lower)
     med = sum(1 for k in DEPRESSION_KEYWORDS['medium_risk'] if k in text_lower)
     low = sum(1 for k in DEPRESSION_KEYWORDS['low_risk'] if k in text_lower)
     keyword_score = (high * 100) + (med * 40) + (low * 15)
     
-    # 2. Calculate Sentiment Polarity 
     sentiment_polarity = TextBlob(text).sentiment.polarity
-    
-    # 3. Apply Emotion Score from Model
     sadness_score = emotions['all_emotions'].get('sadness', 0)
     anger_score = emotions['all_emotions'].get('anger', 0)
     fear_score = emotions['all_emotions'].get('fear', 0)
@@ -115,29 +180,27 @@ def analyze_mood_level(text, emotions):
     
     negative_emotion_score = (sadness_score * 1.5) + (anger_score * 1.5) + (fear_score * 0.7)
     
-    # 4. Combine factors to get a raw LOW MOOD SCORE
     raw_low_mood = (
         (keyword_score * 0.3) + 
         ((1 - sentiment_polarity) * 30) + 
         (negative_emotion_score * 0.8)
     )
 
-    # Neutral Dampening & Stress Keyword Influence
     if neutral_score > 50 and sentiment_polarity < 0.5:
         raw_low_mood += neutral_score * 0.15 
     
-    # Apply a penalty if severe stress keywords are present
     stress_key_count = sum(1 for k in STRESS_KEYWORDS['high'] + STRESS_KEYWORDS['medium'] if k in text_lower)
     raw_low_mood += stress_key_count * 25 
 
+    positive_key_count = sum(1 for k in POSITIVE_KEYWORDS if k in text_lower)
+    raw_low_mood -= positive_key_count * 40 
+
     low_mood_score = min(100, raw_low_mood / 1.5) 
-    low_mood_score = max(0, low_mood_score)
+    low_mood_score = max(0, low_mood_score) 
     
-    # INVERT to get MOOD RATING (0=Bad, 100=Good)
     mood_rating_score = 100 - low_mood_score 
 
     
-    # 6. Determine Level and Message
     if mood_rating_score >= 80:
         level, label_class = "GREAT MOOD", "great-mood"
         msg = "☀️ Your mood is excellent! Your reflections are very positive and light."
@@ -162,33 +225,30 @@ def analyze_mood_level(text, emotions):
     }
 
 def analyze_stress_level(text, emotions):
-    """
-    Analyzes stress levels, prioritizing stress keywords, Fear/Anxiety emotions.
-    Stress Score (0=Low, 100=High).
-    """
+    """Stress Score (0=Low, 100=High)."""
     text_lower = text.lower()
     
-    # 1. Keyword Score
     high = sum(1 for k in STRESS_KEYWORDS['high'] if k in text_lower)
     med = sum(1 for k in STRESS_KEYWORDS['medium'] if k in text_lower)
     low = sum(1 for k in STRESS_KEYWORDS['low'] if k in text_lower)
 
     keyword_score = (high * 60) + (med * 35) + (low * 15)
     
-    # 2. Emotion Score 
     fear_score = emotions['all_emotions'].get('fear', 0)
     anger_score = emotions['all_emotions'].get('anger', 0) 
     surprise_score = emotions['all_emotions'].get('surprise', 0)
+    sadness_score = emotions['all_emotions'].get('sadness', 0)
     
-    # 3. Sentiment/General Stress 
     polarity = TextBlob(text).sentiment.polarity 
     general_stress_penalty = (1 - polarity) * 15 
         
-    # Combine factors, giving highest weight to keywords and tension emotions
-    raw_stress = keyword_score + (fear_score * 0.9) + (anger_score * 0.5) + (surprise_score * 0.3) + general_stress_penalty
+    raw_stress = keyword_score + (fear_score * 0.9) + (anger_score * 0.5) + (surprise_score * 0.3) + (sadness_score * 0.6) + general_stress_penalty
     
-    # Normalize and clip
+    positive_key_count = sum(1 for k in POSITIVE_KEYWORDS if k in text_lower)
+    raw_stress -= positive_key_count * 50 
+
     final_score = min(100, raw_stress / 1.7) 
+    final_score = max(0, final_score) 
 
     if final_score >= 70:
         level, msg = "HIGH STRESS", "🔴 High stress detected. You seem overwhelmed. Take immediate steps to find a moment of calm."
@@ -200,30 +260,30 @@ def analyze_stress_level(text, emotions):
     return {'level': level, 'score': int(final_score), 'explanation': msg}
 
 def analyze_emotions(text):
-    """
-    Analyzes emotions and includes an override for 'overwhelmed' if detected.
-    """
+    """Analyzes emotions and includes overrides for 'overwhelmed' and 'nervous'."""
     text_lower = text.lower()
     
-    # --- CRITICAL OVERRIDE FOR OVERWHELM ---
-    # If the user mentions being overwhelmed or heavy workload, force Fear/Anxiety.
-    if 'overwhelmed' in text_lower or 'amount of work' in text_lower or 'too much' in text_lower:
-        print("Override: Forcing high FEAR/ANXIETY due to 'overwhelmed' keywords.")
-        
-        # Manually create the emotions dictionary to strongly suggest Fear/Anxiety
+    if 'overwhelmed' in text_lower or 'amount of work' in text_lower or 'too much' in text_lower or 'drained' in text_lower or 'never catch up' in text_lower:
+        print("Override: Forcing high FEAR/ANXIETY/SADNESS due to 'overwhelmed' or 'drained' keywords.")
         custom_emotions = {
-            'fear': 85.0,        # High Fear/Anxiety
-            'anger': 5.0,
-            'sadness': 5.0,
-            'neutral': 2.0,
-            'surprise': 1.0,     # Low Surprise
-            'joy': 1.0,
-            'disgust': 1.0,
+            'fear': 50.0, 'sadness': 40.0, 'anger': 5.0, 'neutral': 2.0,
+            'surprise': 1.0, 'joy': 1.0, 'disgust': 1.0,
         }
-        dominant = 'fear'
+        dominant = 'fear' if 'overwhelmed' in text_lower else 'sadness'
         return {'dominant': dominant, 'all_emotions': custom_emotions}
         
-    # --- Default Model Analysis ---
+    is_nervous = 'nervous' in text_lower or 'anxious' in text_lower
+    is_mitigated = any(k in text_lower for k in POSITIVE_KEYWORDS)
+    
+    if is_nervous and is_mitigated:
+        print("Override: Mitigating 'nervous' due to positive keywords.")
+        custom_emotions = {
+            'neutral': 60.0, 'joy': 20.0, 'fear': 15.0,     
+            'sadness': 0.0, 'anger': 0.0, 'disgust': 0.0, 'surprise': 5.0
+        }
+        dominant = 'neutral'
+        return {'dominant': dominant, 'all_emotions': custom_emotions}
+        
     if not emotion_classifier:
         return {'dominant': 'neutral', 'all_emotions': {'neutral': 100.0}}
     try:
@@ -258,42 +318,86 @@ def get_recommendations(mood, stress):
 
     return list(dict.fromkeys(recs))[:3]
 
-# --- Voice Recognition ---
 def speech_to_text(audio_file_path):
     recognizer = sr.Recognizer()
     try:
         with sr.AudioFile(audio_file_path) as source:
             audio_data = recognizer.record(source)
-        print("Transcribing audio...")
         text = recognizer.recognize_google(audio_data)
-        print(f"Transcription: {text}")
         return text
-    except sr.UnknownValueError:
-        print("Google Speech Recognition could not understand audio")
-        return None
-    except sr.RequestError as e:
-        print(f"Could not request results from Google Speech Recognition service; {e}")
-        return None
-    except Exception as e:
-        print(f"Error in speech_to_text: {e}") 
+    except Exception:
         return None
 
 # ----------------------------------------------------
-# --- Application Routes (Simplified for testing) ---
+# --- Application Routes (Integrated) ---
 # ----------------------------------------------------
 
 @app.route('/')
+@login_required 
 def home():
-    return render_template('index.html') 
+    # --- UPDATED: Pass the user's role to the template ---
+    return render_template('index.html', user_role=current_user.role) 
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for('home'))
+    
+    if request.method == 'POST':
+        username = request.form.get('username') 
+        email = request.form.get('email')
+        password = request.form.get('password')
+        
+        user = db.session.execute(db.select(User).filter_by(username=username)).scalar_one_or_none()
+        if user:
+            flash('Username already exists. Please choose a different one.', 'error')
+            return redirect(url_for('register'))
+
+        new_user = User(username=username, email=email)
+        new_user.set_password(password)
+        
+        db.session.add(new_user)
+        db.session.commit()
+        flash('Registration successful! You can now log in.', 'success')
+        return redirect(url_for('login'))
+        
+    return render_template('register.html')
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('home'))
+
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        user = db.session.execute(db.select(User).filter_by(username=username)).scalar_one_or_none()
+        
+        if user is None or not user.check_password(password):
+            flash('Invalid username or password.', 'error')
+            return redirect(url_for('login'))
+        
+        login_user(user)
+        return redirect(url_for('home')) 
+        
+    return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('login'))
 
 @app.route('/analyze', methods=['POST'])
+@login_required 
 def analyze():
     text_input = None
     temp_webm_path = None 
     temp_wav_path = None 
     
     try:
-        # --- 1. Get Text Input ---
         if 'text' in request.form and request.form['text'].strip():
             text_input = request.form['text'].strip()
         
@@ -314,30 +418,40 @@ def analyze():
         if not text_input or len(text_input) < 10:
             return jsonify({'error': 'No valid text input detected, or audio was unclear/too short.'}), 400
 
-        # --- 2. Run AI Analysis ---
         emotion_results = analyze_emotions(text_input) 
         mood = analyze_mood_level(text_input, emotion_results) 
         stress = analyze_stress_level(text_input, emotion_results) 
         recs = get_recommendations(mood, stress)
         
-        # --- Get richer, secondary feelings for display ---
         secondary_feelings = map_emotions_to_feelings(emotion_results, text_input.lower())
         
-        # --- 3. Return Results ---
+        # --- NEW: Join recommendations into a single string for DB ---
+        recs_string = "||".join(recs)
+        
+        new_entry = CheckInEntry(
+            # timestamp is now handled by default=
+            mood_score=mood['score'],
+            stress_score=stress['score'],
+            full_text=text_input,
+            recommendations=recs_string, # Save the string
+            user_id=current_user.id
+        )
+        db.session.add(new_entry)
+        db.session.commit()
+
         return jsonify({
             'text': text_input,
             'mood': mood, 
             'stress': stress,
-            # CRITICAL: Return the merged feelings list for the frontend display
             'emotion': {'dominant': emotion_results['dominant'], 'all_emotions': secondary_feelings},
-            'recommendations': recs
+            'recommendations': recs 
         })
 
     except subprocess.CalledProcessError as e:
         print(f"ffmpeg conversion failed: {e.stderr}")
         return jsonify({'error': 'Audio conversion failed. Please ensure ffmpeg is installed and accessible.'}), 500
     except Exception as e:
-        print(f"!!! FATAL ANALYSIS ERROR: {e}")
+        print(f"!!! FATAL ANALYSIS/SAVE ERROR: {e}")
         return jsonify({'error': f'An internal server error occurred: {str(e)}'}), 500
     
     finally:
@@ -346,7 +460,108 @@ def analyze():
         if temp_wav_path and os.path.exists(temp_wav_path):
             os.remove(temp_wav_path)
 
+
+@app.route('/api/user_data', methods=['GET'])
+@login_required
+def get_user_data():
+    """API endpoint to fetch all historical check-in entries for the logged-in user."""
+    
+    entries = db.session.execute(
+        db.select(CheckInEntry)
+          .filter_by(user_id=current_user.id)
+          .order_by(CheckInEntry.timestamp.desc())
+    ).scalars().all()
+
+    data = [entry.to_dict() for entry in entries]
+    
+    return jsonify(data)
+
+
+# --- NEW: ADMIN ROUTES ---
+
+@app.route('/admin')
+@login_required
+def admin_dashboard():
+    # Protect this route
+    if current_user.role != 'admin':
+        flash('You do not have permission to access this page.', 'error')
+        return redirect(url_for('home'))
+        
+    # We will create this HTML file in the next step
+    return render_template('admin.html') 
+
+
+@app.route('/api/admin_data', methods=['GET'])
+@login_required
+def get_admin_data():
+    # Double-check that only an admin can get this data
+    if current_user.role != 'admin':
+        return jsonify(error="Forbidden"), 403
+
+    # --- Database Queries ---
+    total_users = db.session.scalar(db.select(db.func.count(User.id)))
+    total_checkins = db.session.scalar(db.select(db.func.count(CheckInEntry.id)))
+    
+    avg_mood = 0
+    avg_stress = 0
+    
+    # Calculate averages, handle division by zero if no entries
+    if total_checkins > 0:
+        avg_mood = db.session.scalar(db.select(db.func.avg(CheckInEntry.mood_score)))
+        avg_stress = db.session.scalar(db.select(db.func.avg(CheckInEntry.stress_score)))
+
+    # --- NEW: Per-User Aggregate Data (Privacy-Safe) ---
+    users_data = []
+    users = db.session.execute(db.select(User)).scalars().all()
+    
+    for user in users:
+        user_checkins = db.session.execute(
+            db.select(CheckInEntry)
+            .filter_by(user_id=user.id)
+            .order_by(CheckInEntry.timestamp.desc())
+        ).scalars().all()
+        
+        if not user_checkins:
+            users_data.append({
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,
+                'totalCheckins': 0,
+                'avgMood': 0,
+                'avgStress': 0,
+                'lastActivity': None
+            })
+            continue
+
+        user_avg_mood = sum(e.mood_score for e in user_checkins) / len(user_checkins)
+        user_avg_stress = sum(e.stress_score for e in user_checkins) / len(user_checkins)
+        
+        users_data.append({
+            'username': user.username,
+            'email': user.email,
+            'role': user.role,
+            'totalCheckins': len(user_checkins),
+            'avgMood': round(user_avg_mood, 1),
+            'avgStress': round(user_avg_stress, 1),
+            'lastActivity': user_checkins[0].timestamp.isoformat()
+        })
+
+    # Return all data as JSON
+    return jsonify({
+        'platformStats': {
+            'totalUsers': total_users,
+            'totalCheckins': total_checkins,
+            'avgMoodScore': round(avg_mood, 1),
+            'avgStressScore': round(avg_stress, 1)
+        },
+        'usersData': users_data
+    })
+
+# --- END NEW ADMIN ROUTES ---
+
+
 # --- Main Run Block ---
 if __name__ == '__main__':
-    print("Starting Flask server...")
+    with app.app_context():
+        db.create_all() 
     app.run(debug=True)
